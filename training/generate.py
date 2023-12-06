@@ -17,7 +17,7 @@ from transformers.utils import is_tf_available
 if is_tf_available():
     import tensorflow as tf
 
-from .consts import END_KEY, PROMPT_FOR_GENERATION_FORMAT, RESPONSE_KEY
+from .consts import END_KEY, PROMPT_FOR_GENERATION_FORMAT, RESPONSE_KEY, LTQ_GENERATION_PROMPT
 
 logger = logging.getLogger(__name__)
 
@@ -113,14 +113,16 @@ class InstructionTextGenerationPipeline(Pipeline):
 
         return preprocess_params, forward_params, postprocess_params
 
-    def preprocess(self, instruction_text, **generate_kwargs):
-        prompt_text = PROMPT_FOR_GENERATION_FORMAT.format(instruction=instruction_text)
+    def preprocess(self, sample, **generate_kwargs):
+        #prompt_text = PROMPT_FOR_GENERATION_FORMAT.format(instruction=instruction_text)
+        prompt_text = LTQ_GENERATION_PROMPT.format(instruction=sample["instruction"], input=sample["context"])
         inputs = self.tokenizer(
             prompt_text,
             return_tensors="pt",
         )
         inputs["prompt_text"] = prompt_text
-        inputs["instruction_text"] = instruction_text
+        inputs["instruction_text"] = sample["instruction"]
+        inputs["context_text"] = sample["context"]
         return inputs
 
     def _forward(self, model_inputs, **generate_kwargs):
@@ -148,12 +150,14 @@ class InstructionTextGenerationPipeline(Pipeline):
             generated_sequence = tf.reshape(generated_sequence, (in_b, out_b // in_b, *generated_sequence.shape[1:]))
 
         instruction_text = model_inputs.pop("instruction_text")
-        return {"generated_sequence": generated_sequence, "input_ids": input_ids, "instruction_text": instruction_text}
+        context_text = model_inputs.pop("context_text")
+        return {"generated_sequence": generated_sequence, "input_ids": input_ids, "instruction_text": instruction_text, "context_text": context_text}
 
     def postprocess(self, model_outputs, response_key_token_id, end_key_token_id, return_full_text: bool = False):
 
         generated_sequence = model_outputs["generated_sequence"][0]
         instruction_text = model_outputs["instruction_text"]
+        context_text = model_outputs["context_text"]
 
         generated_sequence: List[List[int]] = generated_sequence.numpy().tolist()
         records = []
@@ -202,7 +206,8 @@ class InstructionTextGenerationPipeline(Pipeline):
                     if m:
                         decoded = m.group(1).strip()
                     else:
-                        logger.warn(f"Failed to find response in:\n{fully_decoded}")
+                        pass
+                        #logger.warn(f"Failed to find response in:\n{fully_decoded}")
 
             # If the full text is requested, then append the decoded text to the original instruction.
             # This technically isn't the full text, as we format the instruction in the prompt the model has been
@@ -218,7 +223,7 @@ class InstructionTextGenerationPipeline(Pipeline):
 
 
 def generate_response(
-    instruction: str,
+    sample: str,
     *,
     model: PreTrainedModel,
     tokenizer: PreTrainedTokenizer,
@@ -237,4 +242,4 @@ def generate_response(
     """
 
     generation_pipeline = InstructionTextGenerationPipeline(model=model, tokenizer=tokenizer, **kwargs)
-    return generation_pipeline(instruction)[0]["generated_text"]
+    return generation_pipeline(sample)[0]["generated_text"]

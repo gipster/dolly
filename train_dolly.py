@@ -34,18 +34,22 @@
 
 # COMMAND ----------
 
-# MAGIC !wget https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2204/x86_64/libcusparse-dev-11-7_11.7.3.50-1_amd64.deb -O /tmp/libcusparse-dev-11-7_11.7.3.50-1_amd64.deb && \
-# MAGIC   wget https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2204/x86_64/libcublas-dev-11-7_11.10.1.25-1_amd64.deb -O /tmp/libcublas-dev-11-7_11.10.1.25-1_amd64.deb && \
-# MAGIC   wget https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2204/x86_64/libcusolver-dev-11-7_11.4.0.1-1_amd64.deb -O /tmp/libcusolver-dev-11-7_11.4.0.1-1_amd64.deb && \
-# MAGIC   wget https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2204/x86_64/libcurand-dev-11-7_10.2.10.91-1_amd64.deb -O /tmp/libcurand-dev-11-7_10.2.10.91-1_amd64.deb && \
-# MAGIC   dpkg -i /tmp/libcusparse-dev-11-7_11.7.3.50-1_amd64.deb && \
-# MAGIC   dpkg -i /tmp/libcublas-dev-11-7_11.10.1.25-1_amd64.deb && \
-# MAGIC   dpkg -i /tmp/libcusolver-dev-11-7_11.4.0.1-1_amd64.deb && \
-# MAGIC   dpkg -i /tmp/libcurand-dev-11-7_10.2.10.91-1_amd64.deb
+!wget https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2204/x86_64/libcusparse-dev-11-7_11.7.3.50-1_amd64.deb -O /tmp/libcusparse-dev-11-7_11.7.3.50-1_amd64.deb && \
+  wget https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2204/x86_64/libcublas-dev-11-7_11.10.1.25-1_amd64.deb -O /tmp/libcublas-dev-11-7_11.10.1.25-1_amd64.deb && \
+  wget https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2204/x86_64/libcusolver-dev-11-7_11.4.0.1-1_amd64.deb -O /tmp/libcusolver-dev-11-7_11.4.0.1-1_amd64.deb && \
+  wget https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2204/x86_64/libcurand-dev-11-7_10.2.10.91-1_amd64.deb -O /tmp/libcurand-dev-11-7_10.2.10.91-1_amd64.deb && \
+  dpkg -i /tmp/libcusparse-dev-11-7_11.7.3.50-1_amd64.deb && \
+  dpkg -i /tmp/libcublas-dev-11-7_11.10.1.25-1_amd64.deb && \
+  dpkg -i /tmp/libcusolver-dev-11-7_11.4.0.1-1_amd64.deb && \
+  dpkg -i /tmp/libcurand-dev-11-7_10.2.10.91-1_amd64.deb
 
 # COMMAND ----------
 
 # MAGIC %pip install -r requirements.txt
+
+# COMMAND ----------
+
+dbutils.library.restartPython()
 
 # COMMAND ----------
 
@@ -80,7 +84,7 @@ dbutils.widgets.combobox("gpu_family", "a100", ["v100", "a10", "a100"])
 # COMMAND ----------
 
 timestamp = datetime.now().strftime("%Y-%m-%dT%H:%M:%S")
-model_name = "dolly"
+model_name = "ltq"
 
 experiment_id = dbutils.widgets.get("experiment_id")
 input_model = dbutils.widgets.get("input_model")
@@ -91,7 +95,7 @@ if experiment_id:
 
 checkpoint_dir_name = f"{model_name}__{timestamp}"
 
-dolly_training_dir_name = "dolly_training"
+dolly_training_dir_name = "ltq_training"
 
 # Use the local training root path if it was provided.  Otherwise try to find a sensible default.
 local_training_root = dbutils.widgets.get("local_training_root")
@@ -156,7 +160,7 @@ os.environ["TOKENIZERS_PARALLELISM"] = "false"
     --module training.trainer \
     --input-model {input_model} \
     --deepspeed {deepspeed_config} \
-    --epochs 2 \
+    --epochs 15 \
     --local-output-dir {local_output_dir} \
     --dbfs-output-dir {dbfs_output_dir} \
     --per-device-train-batch-size {batch_size} \
@@ -169,6 +173,10 @@ os.environ["TOKENIZERS_PARALLELISM"] = "false"
     --test-size 200 \
     --lr 5e-6 \
     {bf16_flag}
+
+# COMMAND ----------
+
+dbfs_output_dir
 
 # COMMAND ----------
 

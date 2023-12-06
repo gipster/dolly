@@ -19,7 +19,9 @@ from typing import Any, Dict, List, Tuple, Union
 
 import click
 import numpy as np
-from datasets import Dataset, load_dataset
+import pandas as pd
+import os
+from datasets import Dataset, load_dataset, DatasetDict, concatenate_datasets
 from transformers import (
     AutoModelForCausalLM,
     AutoTokenizer,
@@ -39,6 +41,9 @@ from .consts import (
     INSTRUCTION_KEY,
     RESPONSE_KEY_NL,
     DEFAULT_TRAINING_DATASET,
+    LTQ_TRAIN_PROMPT,
+    LTQ_GENERATION_PROMPT,
+    LTQ_TRAINING_DATASET,
 )
 
 logger = logging.getLogger(__name__)
@@ -77,6 +82,37 @@ class DataCollatorForCompletionOnlyLM(DataCollatorForLanguageModeling):
         return batch
 
 
+#  Custom dataset loaders
+def get_hf_dataset(processed_dir):
+    dataset = DatasetDict()
+    for split in ['train', 'val', 'test']:
+        df = pd.read_csv(os.path.join(processed_dir, f'{split}_text_code.csv'))
+        df.dropna(inplace=True)
+        text, code = df['text'].to_list(), df['code'].to_list()
+        #labels = df['label'].to_list()
+        ds = Dataset.from_list([{"context": text[i], "response": code[i]} for i in range(len(text))])
+        dataset[f'{split}'] = ds
+    
+    train_ds = concatenate_datasets([dataset['train'], dataset['val']])
+    dataset = DatasetDict({'train': train_ds, 'test': dataset['test']})
+    
+    return dataset
+
+
+def add_instruction(sample):
+    sample['instruction'] = "You are a powerful text-to-scala model.  Given the following description, generate a snippet of scala code that calculate the payoff of the product."
+    return sample
+
+
+def get_ltq_train_dataset(path_to_data_folder):
+    
+    dataset = get_hf_dataset(path_to_data_folder)
+    dataset = dataset.map(add_instruction)
+
+    return dataset
+#  --------------------------
+
+
 def preprocess_batch(batch: Dict[str, List], tokenizer: AutoTokenizer, max_length: int) -> dict:
     return tokenizer(
         batch["text"],
@@ -86,9 +122,14 @@ def preprocess_batch(batch: Dict[str, List], tokenizer: AutoTokenizer, max_lengt
 
 
 def load_training_dataset(path_or_dataset: str = DEFAULT_TRAINING_DATASET) -> Dataset:
+    logger.info("=" * 100)
     logger.info(f"Loading dataset from {path_or_dataset}")
-    dataset = load_dataset(path_or_dataset)["train"]
+    if path_or_dataset == LTQ_TRAINING_DATASET:
+        dataset = get_ltq_train_dataset(path_or_dataset)
+    else:
+        dataset = load_dataset(path_or_dataset)
     logger.info("Found %d rows", dataset.num_rows)
+    logger.info("=" * 100)
 
     def _add_text(rec):
         instruction = rec["instruction"]
@@ -160,10 +201,14 @@ def preprocess_dataset(tokenizer: AutoTokenizer, max_length: int, seed=DEFAULT_S
 
     logger.info("Preprocessing dataset")
     _preprocessing_function = partial(preprocess_batch, max_length=max_length, tokenizer=tokenizer)
+    if training_dataset == DEFAULT_TRAINING_DATASET:
+        cols_to_remove = ["instruction", "context", "response", "text", "category"]
+    else:
+        cols_to_remove = ["instruction", "context", "response", "text"]
     dataset = dataset.map(
         _preprocessing_function,
         batched=True,
-        remove_columns=["instruction", "context", "response", "text", "category"],
+        remove_columns=cols_to_remove,
     )
 
     # Make sure we don't have any truncated records, as this would mean the end keyword is missing.
@@ -199,7 +244,8 @@ def train(
     test_size: Union[float, int],
     save_total_limit: int,
     warmup_steps: int,
-    training_dataset: str = DEFAULT_TRAINING_DATASET,
+    training_dataset: str = LTQ_TRAINING_DATASET,
+    split_train_test: bool = False
 ):
     set_seed(seed)
 
@@ -223,7 +269,12 @@ def train(
 
     processed_dataset = preprocess_dataset(tokenizer=tokenizer, max_length=max_length, seed=seed, training_dataset=training_dataset)
 
-    split_dataset = processed_dataset.train_test_split(test_size=test_size, seed=seed)
+    if split_train_test:
+        split_dataset = processed_dataset.train_test_split(test_size=test_size, seed=seed)
+    else
+        split_dataset = processed_dataset
+
+    print(split_dataset)
 
     logger.info("Train data size: %d", split_dataset["train"].num_rows)
     logger.info("Test data size: %d", split_dataset["test"].num_rows)
@@ -306,7 +357,7 @@ def train(
 @click.option("--lr", type=float, default=1e-5, help="Learning rate to use for training.")
 @click.option("--seed", type=int, default=DEFAULT_SEED, help="Seed to use for training.")
 @click.option("--deepspeed", type=str, default=None, help="Path to deepspeed config file.")
-@click.option("--training-dataset", type=str, default=DEFAULT_TRAINING_DATASET, help="Path to dataset for training")
+@click.option("--training-dataset", type=str, default=LTQ_TRAINING_DATASET, help="Path to dataset for training")
 @click.option(
     "--gradient-checkpointing/--no-gradient-checkpointing",
     is_flag=True,
@@ -320,6 +371,7 @@ def train(
     help="Provided by deepspeed to identify which instance this process is when performing multi-GPU training.",
 )
 @click.option("--bf16", type=bool, default=None, help="Whether to use bf16 (preferred on A100's).")
+@click.option("--split_train_test", type=bool, default=False, help="Whether to split the dataset in train and test set. )
 def main(**kwargs):
     train(**kwargs)
 
